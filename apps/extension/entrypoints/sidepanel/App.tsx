@@ -594,6 +594,39 @@ export function App() {
   const [editingProfile, setEditingProfile] = useState<UserProfile | null>(null);
   const [isCreatingNewProfile, setIsCreatingNewProfile] = useState(false);
 
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (
+        isProfileDropdownOpen &&
+        profileDropdownRef.current &&
+        !profileDropdownRef.current.contains(target)
+      ) {
+        setIsProfileDropdownOpen(false);
+      }
+      if (
+        isMoreMenuOpen &&
+        moreMenuRef.current &&
+        !moreMenuRef.current.contains(target)
+      ) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+
+    if (isProfileDropdownOpen || isMoreMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [isProfileDropdownOpen, isMoreMenuOpen]);
+
   // Smart Notes & Raw Reminders State
   const [savedNotes, setSavedNotes] = useState<RawNoteItem[]>(() => {
     try {
@@ -3058,14 +3091,17 @@ export function App() {
         {/* Profile Vault Quick Switcher, Live Status & Settings Icon Button */}
         <div class="flex items-center gap-1.5 shrink-0">
           {/* Active Profile Pill Switcher */}
-          <div class="relative">
+          <div class="relative" ref={profileDropdownRef}>
             {(() => {
               const currentActiveProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
               const currentProfileStyles = getProfileColorStyles(currentActiveProfile?.color);
               return (
                 <>
                   <button
-                    onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                    onClick={() => {
+                      setIsProfileDropdownOpen(!isProfileDropdownOpen);
+                      setIsMoreMenuOpen(false);
+                    }}
                     class={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition active:scale-95 ${
                       currentProfileStyles.badge
                     } hover:brightness-110`}
@@ -3097,7 +3133,10 @@ export function App() {
                           return (
                             <button
                               key={prof.id}
-                              onClick={() => handleSelectActiveProfile(prof.id)}
+                              onClick={() => {
+                                handleSelectActiveProfile(prof.id);
+                                setIsProfileDropdownOpen(false);
+                              }}
                               class={`w-full px-2 py-1.5 rounded-lg flex items-center justify-between text-left transition ${
                                 isSelected
                                   ? "bg-white/[0.08] text-white font-semibold"
@@ -3132,7 +3171,10 @@ export function App() {
 
                       <div class="border-t border-white/[0.06] pt-1 px-1 mt-1 space-y-0.5">
                         <button
-                          onClick={handleOpenCreateProfile}
+                          onClick={() => {
+                            setIsProfileDropdownOpen(false);
+                            handleOpenCreateProfile();
+                          }}
                           class="w-full px-2 py-1.5 rounded-lg text-left text-[11px] font-semibold accent-text hover:bg-[var(--accent-bg-subtle)] flex items-center gap-1.5 transition"
                         >
                           <PlusIcon size={12} />
@@ -3159,9 +3201,12 @@ export function App() {
           </div>
 
           {/* Feature Hub Dropdown Menu */}
-          <div class="relative">
+          <div class="relative" ref={moreMenuRef}>
             <button
-              onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+              onClick={() => {
+                setIsMoreMenuOpen(!isMoreMenuOpen);
+                setIsProfileDropdownOpen(false);
+              }}
               class={`p-1.5 rounded-lg border transition active:scale-95 shrink-0 ${
                 isMoreMenuOpen
                   ? "bg-white/[0.12] border-white/[0.25] text-white"
