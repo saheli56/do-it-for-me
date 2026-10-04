@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "preact/hooks";
+import { evaluateHeuristics } from "../../src/heuristics";
 import type {
   TaskState,
   ServerMessage,
@@ -565,7 +566,15 @@ export function App() {
       return "violet";
     }
   });
+  const [userApiKey, setUserApiKey] = useState(() => {
+    try {
+      return localStorage.getItem("difm_user_api_key") || "";
+    } catch {
+      return "";
+    }
+  });
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isApiModalOpen, setIsApiModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
 
   // Identity Profile Vault State
@@ -590,42 +599,36 @@ export function App() {
     }
   });
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
-  const [isProfileVaultModalOpen, setIsProfileVaultModalOpen] = useState(false);
-  const [editingProfile, setEditingProfile] = useState<UserProfile | null>(null);
-  const [isCreatingNewProfile, setIsCreatingNewProfile] = useState(false);
-
   const profileDropdownRef = useRef<HTMLDivElement>(null);
-  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const featureHubDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Node;
-      if (
-        isProfileDropdownOpen &&
-        profileDropdownRef.current &&
-        !profileDropdownRef.current.contains(target)
-      ) {
-        setIsProfileDropdownOpen(false);
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      let clickedInside = false;
+      if (profileDropdownRef.current && profileDropdownRef.current.contains(target)) {
+        clickedInside = true;
       }
-      if (
-        isMoreMenuOpen &&
-        moreMenuRef.current &&
-        !moreMenuRef.current.contains(target)
-      ) {
+      if (featureHubDropdownRef.current && featureHubDropdownRef.current.contains(target)) {
+        clickedInside = true;
+      }
+      if (!clickedInside) {
+        setIsProfileDropdownOpen(false);
         setIsMoreMenuOpen(false);
       }
     };
 
     if (isProfileDropdownOpen || isMoreMenuOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      document.addEventListener("touchstart", handleClickOutside);
+      document.addEventListener("mousedown", handleOutsideClick);
     }
-
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
+      document.removeEventListener("mousedown", handleOutsideClick);
     };
   }, [isProfileDropdownOpen, isMoreMenuOpen]);
+
+  const [isProfileVaultModalOpen, setIsProfileVaultModalOpen] = useState(false);
+  const [editingProfile, setEditingProfile] = useState<UserProfile | null>(null);
+  const [isCreatingNewProfile, setIsCreatingNewProfile] = useState(false);
 
   // Smart Notes & Raw Reminders State
   const [savedNotes, setSavedNotes] = useState<RawNoteItem[]>(() => {
@@ -1177,8 +1180,8 @@ export function App() {
   const captureTabObservationWithRetry = async (
     tabId: number,
     currentTaskId: string,
-    maxAttempts = 8,
-    initialDelayMs = 500
+    maxAttempts = 12,
+    initialDelayMs = 50
   ) => {
     await new Promise((r) => setTimeout(r, initialDelayMs));
 
@@ -1186,7 +1189,7 @@ export function App() {
       try {
         const tab = await chrome.tabs.get(tabId);
         if (tab.url?.startsWith("chrome://") || tab.url?.startsWith("about:")) {
-          await new Promise((r) => setTimeout(r, 600));
+          await new Promise((r) => setTimeout(r, 100));
           continue;
         }
 
@@ -1229,7 +1232,7 @@ export function App() {
           );
         });
 
-        await new Promise((r) => setTimeout(r, 450));
+        await new Promise((r) => setTimeout(r, 100));
 
         const retryRes = await new Promise<{ success?: boolean; observation?: PageObservation } | null>((resolve) => {
           chrome.tabs.sendMessage(tabId, { type: "CAPTURE_OBSERVATION" }, (response) => {
@@ -1259,7 +1262,7 @@ export function App() {
         // Retry loop continue
       }
 
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 100));
     }
 
     setLogs((prev) => [
@@ -1272,7 +1275,7 @@ export function App() {
     try {
       const tab = await chrome.tabs.get(tabId);
       if (tab.status === "complete" && tab.url && !tab.url.startsWith("chrome://") && !tab.url.startsWith("about:")) {
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 80));
         return;
       }
     } catch {}
@@ -1290,7 +1293,7 @@ export function App() {
         resolve();
       }, 8000);
     });
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 80));
   };
 
   const openAndPrepareTab = async (targetUrl?: string): Promise<number> => {
@@ -1569,6 +1572,17 @@ export function App() {
   };
 
   const sendExtensionMessage = (msg: ExtensionMessage) => {
+    if (msg.type === "OBSERVATION_CAPTURED" && msg.observation) {
+      const heuristicAction = evaluateHeuristics(currentGoalRef.current, msg.observation);
+      if (heuristicAction) {
+        setLogs((prev) => [...prev, `Heuristics matched! Fast-tracking action (skipping LLM)...`]);
+        const fakeMsg = { type: "EXECUTE_ACTION", taskId: msg.taskId, action: heuristicAction };
+        const ws = setupSocket();
+        ws.onmessage?.(new MessageEvent("message", { data: JSON.stringify(fakeMsg) }));
+        return;
+      }
+    }
+
     const ws = setupSocket();
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
@@ -2058,7 +2072,7 @@ export function App() {
       const currentActiveProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
       const res = await fetch("http://127.0.0.1:3001/parse-rough-task", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(userApiKey ? { "x-user-api-key": userApiKey } : {}) },
         body: JSON.stringify({
           rawGoal: goal.trim(),
           currentUrl: tab?.url,
@@ -2163,7 +2177,7 @@ export function App() {
         const currentActiveProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
         const res = await fetch("http://127.0.0.1:3001/parse-rough-task", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(userApiKey ? { "x-user-api-key": userApiKey } : {}) },
           body: JSON.stringify({
             rawGoal: raw,
             currentUrl: currentTabUrl,
@@ -2931,7 +2945,7 @@ export function App() {
 
       const res = await fetch("http://127.0.0.1:3001/extract-bill", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(userApiKey ? { "x-user-api-key": userApiKey } : {}) },
         body: JSON.stringify({
           text: textContent || undefined,
           imageBase64: imageBase64 || undefined,
@@ -3066,16 +3080,7 @@ export function App() {
       {/* Aceternity ambient glow backdrop */}
       <div class="ambient-glow" />
 
-      {/* Click-outside backdrop overlay for header dropdowns */}
-      {(isProfileDropdownOpen || isMoreMenuOpen) && (
-        <div
-          onClick={() => {
-            setIsProfileDropdownOpen(false);
-            setIsMoreMenuOpen(false);
-          }}
-          class="fixed inset-0 z-30 bg-black/10 backdrop-blur-[0.5px] cursor-default"
-        />
-      )}
+
 
       {/* Header Section */}
       <header class="relative z-40 flex items-center justify-between pb-2.5 mb-3 border-b border-white/[0.08]">
@@ -3100,7 +3105,7 @@ export function App() {
                   <button
                     onClick={() => {
                       setIsProfileDropdownOpen(!isProfileDropdownOpen);
-                      setIsMoreMenuOpen(false);
+                      if (!isProfileDropdownOpen) setIsMoreMenuOpen(false);
                     }}
                     class={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition active:scale-95 ${
                       currentProfileStyles.badge
@@ -3133,10 +3138,7 @@ export function App() {
                           return (
                             <button
                               key={prof.id}
-                              onClick={() => {
-                                handleSelectActiveProfile(prof.id);
-                                setIsProfileDropdownOpen(false);
-                              }}
+                              onClick={() => handleSelectActiveProfile(prof.id)}
                               class={`w-full px-2 py-1.5 rounded-lg flex items-center justify-between text-left transition ${
                                 isSelected
                                   ? "bg-white/[0.08] text-white font-semibold"
@@ -3171,10 +3173,7 @@ export function App() {
 
                       <div class="border-t border-white/[0.06] pt-1 px-1 mt-1 space-y-0.5">
                         <button
-                          onClick={() => {
-                            setIsProfileDropdownOpen(false);
-                            handleOpenCreateProfile();
-                          }}
+                          onClick={handleOpenCreateProfile}
                           class="w-full px-2 py-1.5 rounded-lg text-left text-[11px] font-semibold accent-text hover:bg-[var(--accent-bg-subtle)] flex items-center gap-1.5 transition"
                         >
                           <PlusIcon size={12} />
@@ -3200,12 +3199,30 @@ export function App() {
             })()}
           </div>
 
+          <div class="flex items-center gap-1.5">
+            {/* Direct API Settings Button */}
+            <button
+              onClick={() => {
+                setIsApiModalOpen(true);
+                setIsMoreMenuOpen(false);
+                setIsProfileDropdownOpen(false);
+              }}
+              class={`p-1.5 rounded-lg border transition active:scale-95 shrink-0 ${
+                isApiModalOpen
+                  ? "bg-white/[0.12] border-white/[0.25] text-white"
+                  : "bg-zinc-900/90 hover:bg-zinc-800 border border-white/[0.08] hover:border-white/[0.18] text-zinc-400 hover:text-white"
+              }`}
+              title="API & Agent Settings (BYOK)"
+            >
+              <GearIcon size={14} />
+            </button>
+
           {/* Feature Hub Dropdown Menu */}
-          <div class="relative" ref={moreMenuRef}>
+          <div class="relative" ref={featureHubDropdownRef}>
             <button
               onClick={() => {
                 setIsMoreMenuOpen(!isMoreMenuOpen);
-                setIsProfileDropdownOpen(false);
+                if (!isMoreMenuOpen) setIsProfileDropdownOpen(false);
               }}
               class={`p-1.5 rounded-lg border transition active:scale-95 shrink-0 ${
                 isMoreMenuOpen
@@ -3241,8 +3258,25 @@ export function App() {
                       <PaletteIcon size={12} />
                     </div>
                     <div class="flex flex-col min-w-0">
-                      <span class="text-[11px] font-semibold">Appearance & Colors</span>
+                      <span class="text-[11px] font-semibold">Appearance</span>
                       <span class="text-[9px] text-zinc-500 font-mono capitalize">Active: {accentColor}</span>
+                    </div>
+                  </button>
+
+                  {/* API & Agent Settings */}
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setIsApiModalOpen(true);
+                    }}
+                    class="w-full px-2.5 py-1.5 rounded-lg text-left text-zinc-200 hover:bg-white/[0.06] hover:text-white flex items-center gap-2 transition mt-1"
+                  >
+                    <div class="w-5 h-5 rounded bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0">
+                      <GearIcon size={12} />
+                    </div>
+                    <div class="flex flex-col min-w-0">
+                      <span class="text-[11px] font-semibold">API & Agent Settings</span>
+                      <span class="text-[9px] text-zinc-500 font-mono">BYOK Config</span>
                     </div>
                   </button>
 
@@ -3318,6 +3352,7 @@ export function App() {
                 </div>
               </div>
             )}
+          </div>
           </div>
         </div>
       </header>
@@ -6703,7 +6738,7 @@ export function App() {
                 <div class="w-6 h-6 rounded-lg bg-zinc-800 border border-white/[0.1] flex items-center justify-center text-zinc-300">
                   <PaletteIcon size={13} />
                 </div>
-                <h3 class="text-xs font-bold text-zinc-100">Accent Color</h3>
+                <h3 class="text-xs font-bold text-zinc-100">Appearance</h3>
               </div>
               <button
                 onClick={() => setIsSettingsModalOpen(false)}
@@ -6714,7 +6749,8 @@ export function App() {
             </div>
 
             {/* Modal Body */}
-            <div class="p-3.5 space-y-3 text-xs bg-zinc-950/70">
+            <div class="p-3.5 space-y-3 text-xs bg-zinc-950/70 overflow-y-auto">
+              <label class="text-zinc-300 font-semibold block">Accent Color</label>
               {/* Color Grid Choice List */}
               <div class="grid grid-cols-2 gap-2">
                 {ACCENT_THEME_OPTIONS.map((theme) => {
@@ -6754,6 +6790,58 @@ export function App() {
             <div class="flex items-center justify-end px-4 py-2.5 border-t border-white/[0.08] bg-zinc-950/90 shrink-0">
               <button
                 onClick={() => setIsSettingsModalOpen(false)}
+                class="px-4 py-1.5 rounded-lg text-xs bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white transition font-medium"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* API & Agent Settings Modal */}
+      {isApiModalOpen && (
+        <div class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 overflow-hidden animate-fade-in">
+          <div class="glass-panel rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden border border-white/[0.12] bg-zinc-950/95 animate-scale-in">
+            {/* Modal Header */}
+            <div class="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] bg-zinc-950/90 shrink-0">
+              <div class="flex items-center gap-2">
+                <div class="w-6 h-6 rounded-lg bg-zinc-800 border border-white/[0.1] flex items-center justify-center text-zinc-300">
+                  <GearIcon size={13} />
+                </div>
+                <h3 class="text-xs font-bold text-zinc-100">API & Agent Settings</h3>
+              </div>
+              <button
+                onClick={() => setIsApiModalOpen(false)}
+                class="text-zinc-400 hover:text-white p-1 rounded-md hover:bg-white/[0.05] transition"
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div class="p-3.5 space-y-3 text-xs bg-zinc-950/70 overflow-y-auto">
+              <div class="space-y-2">
+                <label class="text-zinc-300 font-semibold block">LLM API Key (BYOK)</label>
+                <input
+                  type="password"
+                  class="w-full bg-zinc-900 border border-white/[0.08] rounded-lg px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-white/[0.2] transition"
+                  placeholder="sk-..."
+                  value={userApiKey}
+                  onChange={(e) => {
+                    const v = (e.target as HTMLInputElement).value;
+                    setUserApiKey(v);
+                    localStorage.setItem("difm_user_api_key", v);
+                  }}
+                />
+                <p class="text-[10px] text-zinc-500">Provide your own Groq or OpenAI key.</p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div class="flex items-center justify-end px-4 py-2.5 border-t border-white/[0.08] bg-zinc-950/90 shrink-0">
+              <button
+                onClick={() => setIsApiModalOpen(false)}
                 class="px-4 py-1.5 rounded-lg text-xs bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white transition font-medium"
               >
                 Done

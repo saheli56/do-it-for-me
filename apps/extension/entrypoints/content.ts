@@ -24,7 +24,7 @@ export default defineContentScript({
         const action = message.action as AgentAction;
         executeAgentAction(action).then(async (res) => {
           // Allow DOM to settle and capture fresh observation
-          await new Promise((r) => setTimeout(r, 150));
+          await new Promise((r) => setTimeout(r, 50));
           const nodes = extractSemanticNodes(document.body);
           const securityChallenge = detectSecurityChallenge(document);
           const productContext = detectProductContext(document);

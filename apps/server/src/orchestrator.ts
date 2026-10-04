@@ -121,9 +121,10 @@ export class TaskOrchestrator {
     this.transitionState(session, "EXECUTING");
     session.stepIndex += 1;
     const actionDesc = this.getActionSummary(plannedAction);
+    const scratch = (plannedAction as any).scratchpad ? ` [Memory: ${(plannedAction as any).scratchpad}]` : '';
 
     session.history.push(
-      `Step ${session.stepIndex}: [${plannedAction.type}] ${actionDesc}`
+      `Step ${session.stepIndex}: [${plannedAction.type}] ${actionDesc}${scratch}`
     );
 
     return { action: plannedAction, requiresApproval: false };

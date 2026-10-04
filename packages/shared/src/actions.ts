@@ -35,7 +35,8 @@ export type ElementLocator = z.infer<typeof ElementLocatorSchema>;
 export const ClickActionSchema = z.object({
   type: z.literal("CLICK"),
   target: ElementLocatorSchema,
-  description: z.string()
+  description: z.string(),
+  scratchpad: z.string().optional()
 });
 
 export const TypeActionSchema = z.object({
@@ -44,27 +45,31 @@ export const TypeActionSchema = z.object({
   text: z.string(),
   clearExisting: z.boolean().default(true),
   maskInput: z.boolean().default(false),
-  description: z.string()
+  description: z.string(),
+  scratchpad: z.string().optional()
 });
 
 export const SelectActionSchema = z.object({
   type: z.literal("SELECT"),
   target: ElementLocatorSchema,
   value: z.string(),
-  description: z.string()
+  description: z.string(),
+  scratchpad: z.string().optional()
 });
 
 export const ScrollActionSchema = z.object({
   type: z.literal("SCROLL"),
   direction: z.enum(["UP", "DOWN", "TOP", "BOTTOM"]),
   amount: z.number().optional(),
-  description: z.string()
+  description: z.string(),
+  scratchpad: z.string().optional()
 });
 
 export const NavigateActionSchema = z.object({
   type: z.literal("NAVIGATE"),
   url: z.string().url(),
-  description: z.string()
+  description: z.string(),
+  scratchpad: z.string().optional()
 });
 
 export const WaitActionSchema = z.object({
