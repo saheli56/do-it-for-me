@@ -172,17 +172,17 @@ export function isElementVisible(element: Element): boolean {
   const hidden = element.getAttribute("hidden");
   if (hidden !== null) return false;
 
-  if (typeof window !== "undefined" && window.getComputedStyle) {
-    try {
-      const style = window.getComputedStyle(element);
-      if (
-        style.display === "none" ||
-        style.visibility === "hidden"
-      ) {
-        return false;
-      }
-    } catch {
-      return true;
+  const htmlElement = element as HTMLElement;
+  // In real browsers, offsetWidth/offsetHeight is 0 if hidden.
+  // In JSDOM (testing), it's always 0. So we fallback to getComputedStyle if it's 0.
+  if (htmlElement && htmlElement.offsetWidth === 0 && htmlElement.offsetHeight === 0) {
+    if (typeof window !== "undefined" && window.getComputedStyle) {
+      try {
+        const style = window.getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+          return false;
+        }
+      } catch {}
     }
   }
 

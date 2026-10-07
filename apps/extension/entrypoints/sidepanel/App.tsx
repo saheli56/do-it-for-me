@@ -1300,6 +1300,11 @@ export function App() {
     const tabs = await chrome.tabs.query({ currentWindow: true });
     const currentTab = tabs.find((t) => t.active) || tabs[0];
 
+    // Block invalid internal target URLs
+    if (targetUrl && (targetUrl.includes("chrome//") || targetUrl.includes("about//"))) {
+      targetUrl = undefined;
+    }
+
     // If no targetUrl is provided, reuse current active tab
     if (!targetUrl || !targetUrl.startsWith("http")) {
       if (currentTab?.id) {

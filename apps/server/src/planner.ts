@@ -74,20 +74,25 @@ CORE CAPABILITIES & EXECUTION RULES:
         - "WH-" (e.g. "WH-1000XM5", "WH-1000XM4") means Over-Ear Wireless Headphones.
         - "WF-" (e.g. "WF-1000XM5", "WF-C700N") means In-Ear Wireless Earbuds.
         - If the goal is "Sony WH-1000XM5", you MUST NEVER select "WF-1000XM5" (earbuds) and NEVER select "WH-1000XM6" or "WH-1000XM4" (different generations)!
-      * For Apple/Samsung/Laptops/Mobiles:
+      * For Apple/Samsung/Laptops/Mobiles/Electronics:
         - Base vs Pro vs Max vs Plus vs Ultra must match the user goal exactly.
-      * NEVER click "Add to cart" or a product link on any card that does not match the exact requested model.
+        - BEWARE OF ACCESSORIES (NEGATIVE KEYWORDS): If the user asks for a device (e.g. "Logitech MX Master 3S" or "iPhone 15"), YOU MUST STRICTLY REJECT any product titles containing words like "Case", "Cover", "Skin", "Protector", "Guard", "Cable", or "Charger".
+        - PRICE SANITY CHECK: Accessories (cases/covers) are usually extremely cheap (e.g. ₹200 - ₹900) compared to the actual electronic device (e.g. ₹8,000+). Use the price as a strong signal. If the price is suspiciously low for a high-end electronic device, IT IS A COVER/ACCESSORY. DO NOT ADD IT TO CART.
+      * NEVER click "Add to cart" or a product link on any card that does not match the exact requested model (do not settle for accessories or different generations).
     - Read ONLY the '[Current Price: ...]' or price attached to the EXACT matching product card (e.g. ₹28,990).
     - If the exact matching product's live price <= target price:
       -> In Step 1: CLICK the matching "Add to cart" button on that specific product card (e.g. BUTTON "Add to cart" [for "Sony WH-1000XM5..." at ₹28,990]) or click its title link.
+      -> CRITICAL CART RULES: Default to adding exactly ONE (1) quantity unless the user explicitly requested more. NEVER click the "Add to cart" button multiple times. Once you have clicked "Add to cart", assume it was added successfully. If a confirmation appears or the cart sidebar opens, output COMPLETE immediately. Do not click Add to Cart again!
       -> Advance to cart/checkout and output COMPLETE or REQUEST_APPROVAL with summary: "Price condition met: Found [Exact Product] at ₹[Price] (under target ₹[Target]). Item added to cart and ready at checkout."
     - If the exact matching product's live price > target price:
       -> DO NOT add to cart. Output COMPLETE with summary: "Found [Exact Product] currently at ₹[Price] (above target ₹[Target]). Item not added to cart. Monitoring active."
   * On dedicated product pages:
     - Verify the product title matches the exact model.
     - Locate the live price and compare with target.
-    - If price <= target: Click "Add to Cart" or "Buy Now" immediately.
-    - If price > target: Do not add to cart and report status.
+    - CRITICAL: If the user explicitly asked to "add to cart" or "buy" and DID NOT specify a target maximum price, you MUST click the "Add to Cart" or "Buy Now" button immediately. Do not just report that the button is available.
+    - If a target price WAS specified:
+      - If price <= target: Click "Add to Cart" or "Buy Now" immediately.
+      - If price > target: Do not add to cart and report status.
 
 6. PROHIBITED ACTIONS & LOOP PREVENTION:
 - NEVER output a WAIT action for long intervals (e.g. minutes or hours) or to schedule future checks. All actions must execute immediately in real time. If on a store homepage, always search for the product immediately.
@@ -126,6 +131,9 @@ Respond with a SINGLE VALID JSON object in this exact schema:
 export function normalizeExtractedUrl(rawUrl?: string, textContext = ""): string | undefined {
   if (rawUrl && rawUrl.trim()) {
     let url = rawUrl.trim().replace(/[\.,;:)]+$/, "");
+    if (url.startsWith("chrome://") || url.startsWith("about:") || url.startsWith("chrome-extension://") || url.startsWith("edge://")) {
+      return undefined;
+    }
     if (/cesc\.(con|coin|co\.in|co|in|com)/i.test(url) || url.toLowerCase().includes("cesc.")) {
       return "https://www.cesc.co.in";
     }
@@ -760,7 +768,7 @@ Respond with ONLY a JSON object in this schema:
     let priceCondition: import("@difm/shared").PriceCondition | undefined = undefined;
 
     // Check for shopping / commerce watch
-    const isCommerce = /amazon|flipkart|myntra|meesho|ajio|croma|price\s*drop|track\s*price|when\s*price|below\s*(?:₹|rs\.?|\$)?\s*\d+|under\s*(?:₹|rs\.?|\$)?\s*\d+/i.test(raw) ||
+    const isCommerce = /amazon|flipkart|myntra|meesho|ajio|croma|price\s*drop|track\s*price|when\s*price|below\s*(?:₹|rs\.?|\$)?\s*\d+|under\s*(?:₹|rs\.?|\$)?\s*\d+|cart|buy|purchase/i.test(raw) ||
       (portalUrl && /amazon\.|flipkart\.|myntra\.|meesho\.|ajio\./i.test(portalUrl));
 
     if (isCommerce) {
@@ -775,7 +783,8 @@ Respond with ONLY a JSON object in this schema:
         providerName = "Myntra";
         if (!portalUrl) portalUrl = "https://www.myntra.com";
       } else {
-        providerName = "Shopping Store";
+        providerName = "Amazon"; // Default to Amazon if no specific store was mentioned
+        if (!portalUrl) portalUrl = "https://www.amazon.in";
       }
 
       // Extract target price (e.g., "under 20000", "below 15000", "drop to 999")
