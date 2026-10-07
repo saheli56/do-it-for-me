@@ -137,6 +137,12 @@ async function inspectCommerceTask(task: PendingTaskItem): Promise<void> {
 
   if (!targetUrl) return;
 
+  // Block internal browser URLs from being opened automatically
+  if (targetUrl.includes("chrome://") || targetUrl.includes("chrome//") || targetUrl.includes("about://")) {
+    console.warn(`[DIFM Background] Aborting automated inspection for internal URL: ${targetUrl}`);
+    return;
+  }
+
   let inspectionTabId: number | undefined;
 
   try {
