@@ -3,7 +3,6 @@ import type { AgentAction } from "@difm/shared";
 export function evaluateHeuristics(goal: string, observation: any): AgentAction | null {
   const goalLower = goal.toLowerCase();
   
-  // Safely parse URL
   let urlObj: URL;
   try {
     urlObj = new URL(observation.url || "about:blank");
@@ -21,56 +20,77 @@ export function evaluateHeuristics(goal: string, observation: any): AgentAction 
   const isMyntra = hostname.includes("myntra.com");
 
   const isShoppingHomepage = isHomepage && (isAmazon || isFlipkart || isMyntra);
-  const isShoppingSearchIntent = ["compare", "buy", "watch", "search"].some(w => goalLower.includes(w));
+  const isShoppingSearchIntent = ["compare", "buy", "watch", "search", "purchase", "cart"].some(w => goalLower.includes(w));
 
   const nodes: any[] = observation.interactiveNodes || [];
 
   // Amazon / Flipkart / Myntra (Search)
   if (isShoppingHomepage && isShoppingSearchIntent) {
     const searchBox = nodes.find(n => 
-      n.role === "textbox" || 
-      n.role === "combobox" || 
-      n.role === "search" || 
+      n.role === "textbox" || n.role === "combobox" || n.role === "search" || 
       (n.name && n.name.toLowerCase().includes("search")) ||
       (n.placeholder && n.placeholder.toLowerCase().includes("search"))
     );
 
     if (searchBox) {
-      let query = goalLower.replace(/^(search for|buy|compare)\s+/i, "").trim();
-      if (!query) query = goalLower;
+      // Extract main query
+      let query = goalLower.replace(/^(search for|buy|purchase|find|add to cart)\s+/i, "").trim();
+      query = query.replace(/(on amazon|from amazon|in amazon).*/i, "").trim();
+      
+      // Also simulate clicking the search button if we can find it
+      const searchBtn = nodes.find(n => n.name && (n.name.toLowerCase() === "go" || n.name.toLowerCase() === "search"));
+
+      if (searchBtn) {
+         // Return a TYPE action. The executor in App.tsx will need to press enter or click the button. 
+         // For now, typing is enough if it hits enter.
+      }
 
       return {
         type: "TYPE",
         target: { id: searchBox.id, name: searchBox.name },
         text: query,
-        description: `Typed "${query}" into search box via heuristics`
+        description: `Typed "${query}" into search box via fast heuristics`
       };
     }
   }
 
-  // Amazon / Flipkart / Myntra (Add to Cart)
-  if (isAmazon || isFlipkart || isMyntra) {
-    if (observation.productContext?.addToCartNodeId) {
+  // Amazon Search Results
+  if (isAmazon && urlLower.includes("s?k=")) {
+    // Find the best product link, avoiding cases/covers
+    const validLinks = nodes.filter(n => {
+      if (n.role !== "link") return false;
+      const name = (n.name || "").toLowerCase();
+      // Skip pagination, headers, nav
+      if (!name || name.length < 20 || name.includes("customer review")) return false;
+      // Skip accessories
+      if (name.includes("case") || name.includes("cover") || name.includes("protector") || name.includes("guard")) return false;
+      return true;
+    });
+
+    if (validLinks.length > 0) {
       return {
         type: "CLICK",
-        target: { id: observation.productContext.addToCartNodeId },
-        description: "Clicked Add to Cart button from product context"
+        target: { id: validLinks[0].id, name: validLinks[0].name },
+        description: "Clicked best matching product link in search results via fast heuristics"
       };
     }
-    
+  }
+
+  // Amazon Product Page (Add to Cart)
+  if (isAmazon && (urlLower.includes("/dp/") || urlLower.includes("/gp/product/"))) {
     const cartBtn = nodes.find(n => 
-      n.name && (n.name.toLowerCase().includes("add to cart") || n.name.toLowerCase().includes("add to bag"))
+      n.name && (n.name.toLowerCase() === "add to cart" || n.name.toLowerCase() === "add to shopping cart")
     );
     if (cartBtn) {
       return {
         type: "CLICK",
         target: { id: cartBtn.id, name: cartBtn.name },
-        description: "Clicked Add to Cart fallback button via heuristics"
+        description: "Clicked Add to Cart button via fast heuristics!"
       };
     }
   }
 
-  // Flipkart (Search Results)
+  // Flipkart Search Results
   if (isFlipkart && urlLower.includes("search?q=")) {
     const productLink = nodes.find(n => n.role === "link" || (n.href && n.href.includes("/p/")));
     if (productLink) {
