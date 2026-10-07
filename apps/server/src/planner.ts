@@ -174,7 +174,8 @@ export class PlannerService {
   async planNextStep(
     goal: string,
     observation: PageObservation,
-    stepHistory: string[]
+    stepHistory: string[],
+    _storeQuotes?: any
   ): Promise<AgentAction> {
     // Keep last 5 steps to prevent prompt explosion on long tasks
     const recentHistory = stepHistory.slice(-5);
