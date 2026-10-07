@@ -6,6 +6,70 @@ interface IconProps extends JSX.SVGAttributes<SVGSVGElement> {
   class?: string;
 }
 
+interface DifmLogoIconProps extends IconProps {
+  gradientFrom?: string;
+  gradientTo?: string;
+  glowColor?: string;
+  id?: string;
+}
+
+export function DifmLogoIcon({
+  size = 20,
+  class: className = "",
+  gradientFrom = "#6366f1",
+  gradientTo = "#38bdf8",
+  glowColor,
+  id = "difm",
+  ...props
+}: DifmLogoIconProps) {
+  const gradId = `difmGrad_${id}_${gradientFrom.replace(/[^a-zA-Z0-9]/g, "")}`;
+  const effectiveGlow = glowColor || gradientTo;
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      class={`inline-block shrink-0 align-middle ${className}`}
+      {...props}
+    >
+      <defs>
+        <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="35%" stopColor={gradientFrom} />
+          <stop offset="100%" stopColor={gradientTo} />
+        </linearGradient>
+        <filter id={`${gradId}_glow`} x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="0" stdDeviation="2.5" floodColor={effectiveGlow} floodOpacity="0.6" />
+        </filter>
+      </defs>
+
+      {/* Main D Outer Backbone */}
+      <path
+        d="M 32 18 L 62 18 C 80 18 94 32 94 50 C 94 68 80 82 62 82 L 32 82 L 48 66 L 60 66 C 69 66 77 59 77 50 C 77 41 69 34 60 34 L 46 34 Z"
+        fill={`url(#${gradId})`}
+        filter={`url(#${gradId}_glow)`}
+      />
+
+      {/* Primary Speed Line & Forward Arrow Head */}
+      <path
+        d="M 27 41 C 27 38.5 29 36.5 31.5 36.5 H 49 L 63 50 L 49 63.5 H 31.5 C 29 63.5 27 61.5 27 59 C 27 56.5 29 54.5 31.5 54.5 H 43 L 46.5 50 L 43 45.5 H 31.5 C 29 45.5 27 43.5 27 41 Z"
+        fill={`url(#${gradId})`}
+      />
+
+      {/* Speed Line 1 (Top Left) */}
+      <rect x="8" y="37" width="16" height="7" rx="3.5" fill={`url(#${gradId})`} opacity="0.9" />
+
+      {/* Speed Line 2 (Middle Left) */}
+      <rect x="2" y="46.5" width="23" height="7" rx="3.5" fill={`url(#${gradId})`} opacity="1" />
+
+      {/* Speed Line 3 (Bottom Left) */}
+      <rect x="12" y="56" width="13" height="7" rx="3.5" fill={`url(#${gradId})`} opacity="0.85" />
+    </svg>
+  );
+}
+
 export function LightningIcon({ size = 16, class: className = "", ...props }: IconProps) {
   return (
     <svg
