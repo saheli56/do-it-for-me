@@ -117,6 +117,28 @@ export function getAccessibleName(element: Element): string {
     }
   }
 
+  // Infer accessible name for icon-only buttons & links
+  if (element.tagName === "BUTTON" || element.getAttribute("role") === "button" || element.tagName === "A") {
+    if (element.querySelector("svg, img, [class*='icon' i]")) {
+      const elHtml = element.outerHTML.toLowerCase();
+      if (elHtml.includes("cart") || elHtml.includes("bag") || elHtml.includes("basket")) {
+        return "Add to Cart";
+      }
+      if (elHtml.includes("search")) {
+        return "Search";
+      }
+      if (elHtml.includes("close") || elHtml.includes("cross") || elHtml.includes("dismiss")) {
+        return "Close";
+      }
+      if (elHtml.includes("heart") || elHtml.includes("wishlist")) {
+        return "Wishlist";
+      }
+      if (elHtml.includes("share")) {
+        return "Share";
+      }
+    }
+  }
+
   return "";
 }
 
@@ -477,17 +499,41 @@ export function detectProductContext(doc: Document = typeof document !== "undefi
     const productTitleEl = doc.querySelector(
       '#productTitle, h1.a-size-large, span.B_NuCI, .product-title, h1[class*="product" i], h1[class*="title" i]'
     );
-    const addToCartEl = doc.querySelector(
-      '#add-to-cart-button, #add-to-cart-button-ubb, input[name="submit.add-to-cart"], button[name="submit.add-to-cart"], button._2KpZ6l._2U9uOA._3v1-ww, button[class*="add-to-cart" i], [id*="add-to-cart" i], [aria-label*="Add to Cart" i]'
+    let addToCartEl = doc.querySelector(
+      '#add-to-cart-button, #add-to-cart-button-ubb, input[name="submit.add-to-cart"], button[name="submit.add-to-cart"], button._2KpZ6l._2U9uOA._3v1-ww, button[class*="add-to-cart" i], [id*="add-to-cart" i], [aria-label*="Add to Cart" i], button:has(svg[class*="cart" i])'
     );
     const buyNowEl = doc.querySelector(
       '#buy-now-button, input[name="submit.buy-now"], button[name="submit.buy-now"], button._2KpZ6l._2U9uOA._12ko4O, button[class*="buy-now" i], [id*="buy-now" i], [aria-label*="Buy Now" i]'
     );
 
+    // If no explicit add-to-cart found, look for icon buttons next to Buy Now or in action row
+    if (!addToCartEl && buyNowEl) {
+      const parent = buyNowEl.parentElement;
+      if (parent) {
+        const siblingButtons = parent.querySelectorAll('button, a[role="button"]');
+        for (const btn of Array.from(siblingButtons)) {
+          if (btn !== buyNowEl && isElementVisible(btn)) {
+            const html = btn.outerHTML.toLowerCase();
+            if (html.includes('cart') || html.includes('svg') || btn.textContent?.toLowerCase().includes('cart')) {
+              addToCartEl = btn;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     let currentPriceText = extractCleanPrice(doc.body || doc.documentElement);
 
-    const inStockEl = doc.querySelector('#availability, .availability, [id*="availability" i]');
-    const isOutOfStock = inStockEl && /currently unavailable|out of stock/i.test(inStockEl.textContent || "");
+    // Accuracy check for inStock: If active purchase/cart buttons exist, it is definitely IN STOCK.
+    // Only flag OUT OF STOCK if no buy/cart buttons exist AND an explicit unavailable message is present.
+    let isOutOfStock = false;
+    if (!addToCartEl && !buyNowEl) {
+      const inStockEl = doc.querySelector('#availability:not(:has(button)), .availability:not(:has(button))');
+      if (inStockEl && /currently unavailable|out of stock/i.test(inStockEl.textContent || "")) {
+        isOutOfStock = true;
+      }
+    }
 
     const addToCartNodeId = addToCartEl ? addToCartEl.getAttribute("data-difm-id") || undefined : undefined;
     const buyNowNodeId = buyNowEl ? buyNowEl.getAttribute("data-difm-id") || undefined : undefined;
@@ -523,7 +569,7 @@ export function detectProductContext(doc: Document = typeof document !== "undefi
       });
     }
 
-    if (productTitleEl || addToCartEl || currentPriceText || searchResults.length > 0) {
+    if (productTitleEl || addToCartEl || buyNowEl || currentPriceText || searchResults.length > 0) {
       return {
         productTitle: productTitleEl?.textContent?.trim().replace(/\s+/g, " ") || undefined,
         price: currentPriceText,

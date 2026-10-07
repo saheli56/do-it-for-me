@@ -89,16 +89,18 @@ CORE CAPABILITIES & EXECUTION RULES:
   * On dedicated product pages:
     - Verify the product title matches the exact model.
     - Locate the live price and compare with target.
-    - CRITICAL: If the user explicitly asked to "add to cart" or "buy" and DID NOT specify a target maximum price, you MUST click the "Add to Cart" or "Buy Now" button immediately. Do not just report that the button is available.
+    - CRITICAL INTENT CHECK: If the user explicitly asked to "add to cart", YOU MUST ONLY click "Add to Cart". DO NOT click "Buy Now" or "Place Order" as that initiates a checkout/login flow. Once added to cart, output COMPLETE.
+    - CRITICAL PRICE CHECK: If the user explicitly asked to "add to cart" or "buy" and DID NOT specify a target maximum price, you MUST click the button immediately. Do not just report that the button is available.
     - If a target price WAS specified:
-      - If price <= target: Click "Add to Cart" or "Buy Now" immediately.
+      - If price <= target: Click the button immediately.
       - If price > target: Do not add to cart and report status.
 
-6. PROHIBITED ACTIONS & LOOP PREVENTION:
+6. PROHIBITED ACTIONS & LOGIN WALLS:
+- LOGIN WALLS: If you encounter a mandatory Login wall, Sign-In screen, or Authentication modal that blocks your progress, DO NOT attempt to fill it out, create an account, or guess passwords. You must output a 'REQUEST_USER_INPUT' action asking the user to manually log in and notify you when they are done.
 - NEVER output a WAIT action for long intervals (e.g. minutes or hours) or to schedule future checks. All actions must execute immediately in real time. If on a store homepage, always search for the product immediately.
 - MAXIMUM WAIT duration is 3000ms (only for brief UI animation/load settlement). NEVER emit durationMs > 3000.
 - NEVER output REQUEST_USER_INPUT to ask the user for public webpage information (such as product price, stock status, or bill amount). As an autonomous agent, you must inspect the elements and read the price from the webpage yourself.
-- ONLY output REQUEST_USER_INPUT for private missing user credentials (e.g. Consumer Account ID, 2FA OTP).
+- ONLY output REQUEST_USER_INPUT for private missing user credentials, 2FA OTPs, or when blocked by a mandatory Login Wall.
 - NEVER enter a loop of repeated SCROLL or REQUEST_USER_INPUT. If on a search page and a product link is visible, CLICK it. If on a homepage, TYPE into the search input.
 
 7. GENERAL INTERACTION RULES:
@@ -107,23 +109,23 @@ CORE CAPABILITIES & EXECUTION RULES:
 - When the goal or form filling has been achieved, output COMPLETE with a clear summary.
 
 OUTPUT FORMAT:
-Respond with a SINGLE VALID JSON object in this exact schema:
+Respond with a SINGLE VALID JSON object in this exact schema. DO NOT include any comments in the JSON. Escape all double quotes inside string values!
 {
   "action": {
-    "type": "CLICK" | "TYPE" | "SELECT" | "SCROLL" | "NAVIGATE" | "WAIT" | "REQUEST_APPROVAL" | "REQUEST_USER_INPUT" | "COMPLETE" | "FAIL",
-    "targetId": "node-123", // required for CLICK, TYPE, SELECT
-    "text": "text to type", // required for TYPE
-    "value": "option value", // required for SELECT
-    "direction": "UP" | "DOWN" | "TOP" | "BOTTOM", // for SCROLL
-    "url": "https://...", // for NAVIGATE
-    "durationMs": 1000, // for WAIT
-    "summary": "Outcome details or scan instruction", // for COMPLETE or REQUEST_APPROVAL
-    "consequences": "Action consequences", // for REQUEST_APPROVAL
-    "prompt": "Question to user", // for REQUEST_USER_INPUT
-    "fieldKey": "field_name", // for REQUEST_USER_INPUT
-    "error": "Error description", // for FAIL
-    "recoverable": false, // for FAIL
-    "description": "Clear step-by-step reasoning" // required
+    "type": "CLICK|TYPE|SELECT|SCROLL|NAVIGATE|WAIT|REQUEST_APPROVAL|REQUEST_USER_INPUT|COMPLETE|FAIL",
+    "targetId": "node-123",
+    "text": "text to type",
+    "value": "option value",
+    "direction": "DOWN",
+    "url": "https://...",
+    "durationMs": 1000,
+    "summary": "Outcome details",
+    "consequences": "Action consequences",
+    "prompt": "Question to user",
+    "fieldKey": "field_name",
+    "error": "Error description",
+    "recoverable": false,
+    "description": "Clear step-by-step reasoning"
   }
 }
 `;
@@ -267,13 +269,34 @@ Analyze the user goal and the interactive elements, then output the next JSON ac
 
         let rawAction: any = null;
         try {
-          const parsed = JSON.parse(messageContent);
+          const cleanContent = messageContent.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+          const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+          const toParse = jsonMatch ? jsonMatch[0] : cleanContent;
+          const parsed = JSON.parse(toParse);
           rawAction = parsed.action || parsed;
-        } catch {
-          const jsonMatch = messageContent.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            rawAction = parsed.action || parsed;
+        } catch (jsonErr: any) {
+          // Robust Regex Fallback for common fields if JSON is completely broken by unescaped quotes
+          const typeMatch = messageContent.match(/["']?type["']?\s*:\s*["']([^"']+)["']/i);
+          const targetMatch = messageContent.match(/["']?targetId["']?\s*:\s*["']([^"']+)["']/i);
+          const textMatch = messageContent.match(/["']?text["']?\s*:\s*["']([^"']*)["']/i);
+          const urlMatch = messageContent.match(/["']?url["']?\s*:\s*["']([^"']+)["']/i);
+          const descMatch = messageContent.match(/["']?description["']?\s*:\s*["']([^"']+)["']/i);
+          const errorMatch = messageContent.match(/["']?error["']?\s*:\s*["']([^"']+)["']/i);
+          const promptMatch = messageContent.match(/["']?prompt["']?\s*:\s*["']([^"']+)["']/i);
+          
+          if (typeMatch) {
+            rawAction = {
+              type: typeMatch[1].toUpperCase(),
+              targetId: targetMatch ? targetMatch[1] : undefined,
+              text: textMatch ? textMatch[1] : undefined,
+              url: urlMatch ? urlMatch[1] : undefined,
+              description: descMatch ? descMatch[1] : "Action recovered via regex fallback",
+              error: errorMatch ? errorMatch[1] : undefined,
+              prompt: promptMatch ? promptMatch[1] : undefined,
+            };
+          } else {
+            console.warn(`JSON parsing failed, and regex fallback couldn't find 'type'. Content was: ${messageContent}`);
+            throw jsonErr;
           }
         }
 
@@ -312,12 +335,13 @@ Analyze the user goal and the interactive elements, then output the next JSON ac
       fieldKey?: string;
       error?: string;
       recoverable?: boolean;
-      description: string;
+      description?: string;
     },
     observation: PageObservation
   ): AgentAction {
+    const nodes = observation?.interactiveNodes || [];
     const targetNode = raw.targetId
-      ? observation.interactiveNodes.find((n) => n.id === raw.targetId)
+      ? nodes.find((n) => n.id === raw.targetId)
       : undefined;
 
     const targetLocator = targetNode
@@ -328,14 +352,27 @@ Analyze the user goal and the interactive elements, then output the next JSON ac
           selector: targetNode.selector,
           bounds: targetNode.bounds
         }
-      : { id: "unknown", selector: "body" };
+      : { id: raw.targetId || "unknown", selector: "body" };
 
-    switch (raw.type) {
+    let normType = (raw.type || "").toUpperCase().trim();
+    if (normType === "INPUT" || normType === "SEARCH" || normType === "WRITE" || normType === "ENTER" || normType === "FILL") {
+      normType = "TYPE";
+    } else if (normType === "PRESS" || normType === "SUBMIT" || normType === "TAP") {
+      normType = "CLICK";
+    } else if (normType === "CHOOSE" || normType === "OPTION") {
+      normType = "SELECT";
+    } else if (normType === "DONE" || normType === "SUCCESS" || normType === "FINISH") {
+      normType = "COMPLETE";
+    }
+
+    const description = raw.description || raw.summary || `Action: ${normType}`;
+
+    switch (normType) {
       case "CLICK":
         return {
           type: "CLICK",
           target: targetLocator,
-          description: raw.description
+          description
         };
       case "TYPE":
         return {
@@ -344,59 +381,59 @@ Analyze the user goal and the interactive elements, then output the next JSON ac
           text: raw.text || "",
           clearExisting: true,
           maskInput: false,
-          description: raw.description
+          description
         };
       case "SELECT":
         return {
           type: "SELECT",
           target: targetLocator,
           value: raw.value || "",
-          description: raw.description
+          description
         };
       case "SCROLL":
         return {
           type: "SCROLL",
           direction: raw.direction || "DOWN",
-          description: raw.description
+          description
         };
       case "NAVIGATE":
         return {
           type: "NAVIGATE",
           url: raw.url || observation.url,
-          description: raw.description
+          description
         };
       case "WAIT": {
         const duration = Math.min(Math.max(100, Number(raw.durationMs) || 1000), 3000);
         return {
           type: "WAIT",
           durationMs: duration,
-          reason: raw.description
+          reason: description
         };
       }
       case "REQUEST_APPROVAL":
         return {
           type: "REQUEST_APPROVAL",
-          summary: raw.summary || raw.description,
+          summary: raw.summary || description,
           details: { url: observation.url },
           consequences: raw.consequences || "This action cannot be undone."
         };
       case "REQUEST_USER_INPUT":
         return {
           type: "REQUEST_USER_INPUT",
-          prompt: raw.prompt || raw.description,
+          prompt: raw.prompt || description,
           fieldKey: raw.fieldKey || "input",
           isSecret: false
         };
       case "COMPLETE":
         return {
           type: "COMPLETE",
-          summary: raw.summary || raw.description
+          summary: raw.summary || description
         };
       case "FAIL":
       default:
         return {
           type: "FAIL",
-          error: raw.error || raw.description,
+          error: raw.error || description,
           recoverable: raw.recoverable ?? false
         };
     }

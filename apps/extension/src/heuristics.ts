@@ -56,14 +56,22 @@ export function evaluateHeuristics(goal: string, observation: any): AgentAction 
 
   // Amazon Search Results
   if (isAmazon && urlLower.includes("s?k=")) {
-    // Find the best product link, avoiding cases/covers
+    let queryWords: string[] = [];
+    try {
+      const kParam = urlObj.searchParams.get("k");
+      if (kParam) queryWords = kParam.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    } catch (e) {}
+
     const validLinks = nodes.filter(n => {
       if (n.role !== "link") return false;
       const name = (n.name || "").toLowerCase();
-      // Skip pagination, headers, nav
       if (!name || name.length < 20 || name.includes("customer review")) return false;
-      // Skip accessories
       if (name.includes("case") || name.includes("cover") || name.includes("protector") || name.includes("guard")) return false;
+      
+      if (queryWords.length > 0) {
+        const matches = queryWords.filter(w => name.includes(w));
+        if (matches.length === 0) return false;
+      }
       return true;
     });
 
@@ -76,28 +84,77 @@ export function evaluateHeuristics(goal: string, observation: any): AgentAction 
     }
   }
 
-  // Amazon Product Page (Add to Cart)
-  if (isAmazon && (urlLower.includes("/dp/") || urlLower.includes("/gp/product/"))) {
-    const cartBtn = nodes.find(n => 
-      n.name && (n.name.toLowerCase() === "add to cart" || n.name.toLowerCase() === "add to shopping cart")
-    );
+  // Amazon & Flipkart Product Page (Add to Cart)
+  const isAmazonProductPage = isAmazon && (urlLower.includes("/dp/") || urlLower.includes("/gp/product/"));
+  const isFlipkartProductPage = isFlipkart && urlLower.includes("/p/");
+  
+  if (isAmazonProductPage || isFlipkartProductPage) {
+    const goToCartBtn = nodes.find(n => {
+      const name = (n.name || "").toLowerCase().trim();
+      return name.includes("go to cart") || name.includes("view cart");
+    });
+
+    if (goToCartBtn) {
+      return {
+        type: "COMPLETE",
+        summary: "Product is already in the cart."
+      };
+    }
+
+    // 1. High confidence: detected from product context
+    if (observation.productContext?.addToCartNodeId) {
+      const targetNode = nodes.find(n => n.id === observation.productContext.addToCartNodeId);
+      if (targetNode) {
+        return {
+          type: "CLICK",
+          target: { id: targetNode.id, name: targetNode.name || "Add to Cart" },
+          description: `Clicked Add to Cart button on ${isAmazon ? "Amazon" : "Flipkart"} via fast heuristics!`
+        };
+      }
+    }
+
+    // 2. Text or name matching
+    const cartBtn = nodes.find(n => {
+      const name = (n.name || "").toLowerCase().trim();
+      if (name.includes("buy now") || name.includes("place order") || name.includes("buy with emi")) return false;
+      return name.includes("add to cart") || name.includes("add to bag") || name === "cart";
+    });
     if (cartBtn) {
       return {
         type: "CLICK",
-        target: { id: cartBtn.id, name: cartBtn.name },
-        description: "Clicked Add to Cart button via fast heuristics!"
+        target: { id: cartBtn.id, name: cartBtn.name || "Add to Cart" },
+        description: `Clicked Add to Cart button on ${isAmazon ? "Amazon" : "Flipkart"} via fast heuristics!`
       };
     }
   }
 
   // Flipkart Search Results
   if (isFlipkart && urlLower.includes("search?q=")) {
-    const productLink = nodes.find(n => n.role === "link" || (n.href && n.href.includes("/p/")));
-    if (productLink) {
+    let queryWords: string[] = [];
+    try {
+      const qParam = urlObj.searchParams.get("q");
+      if (qParam) queryWords = qParam.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    } catch (e) {}
+
+    const validLinks = nodes.filter(n => {
+      const isProductLink = n.role === "link" || (n.href && n.href.includes("/p/"));
+      if (!isProductLink) return false;
+      const name = (n.name || "").toLowerCase();
+      if (!name || name.length < 15) return false;
+      if (name.includes("case") || name.includes("cover") || name.includes("protector") || name.includes("guard")) return false;
+      
+      if (queryWords.length > 0) {
+        const matches = queryWords.filter(w => name.includes(w));
+        if (matches.length === 0) return false;
+      }
+      return true;
+    });
+
+    if (validLinks.length > 0) {
       return {
         type: "CLICK",
-        target: { id: productLink.id, name: productLink.name },
-        description: "Clicked first product link in search results via heuristics"
+        target: { id: validLinks[0].id, name: validLinks[0].name },
+        description: "Clicked best matching product link in search results via heuristics"
       };
     }
   }
