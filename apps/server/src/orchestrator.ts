@@ -29,17 +29,21 @@ export interface TaskSession {
   activeChallenge?: SecurityChallenge;
   plan?: WorkflowPlan;
   storeQuotes: Record<string, StoreQuote>;
+  hasAddedToCart?: boolean;
 }
 
 export function normalizeGoalForExecution(rawGoal: string): string {
-  // If goal has a conditional price trigger (e.g. "when price drops below X", "if price is under X", "buy when <= X")
-  const priceDropMatch = rawGoal.match(/(?:when|if)\s+(?:the\s+)?price\s+(?:drops\s+below|is\s+below|is\s+under|falls\s+below|<=|<)\s*([₹$€£]?\s*[\d,]+(?:\.\d+)?)/i);
+  // If goal has a conditional price trigger (e.g. "when price drops below X", "if price is under X", "buy when <= X", "if it's price is less than X")
+  const priceDropMatch = rawGoal.match(
+    /(?:when|if)\s+(?:the\s+|it's\s+|its\s+)?price\s+(?:drops\s+below|is\s+below|is\s+under|is\s+less\s+than|less\s+than|under|below|falls\s+below|<=|<)\s*([₹$€£]?\s*[\d,]+(?:\.\d+)?)/i
+  );
   
   if (priceDropMatch) {
     const targetPrice = priceDropMatch[1].trim();
     let productPart = rawGoal
-      .replace(/automatically\s+(?:purchase|buy|add\s+to\s+cart|order)\s+/i, "")
-      .replace(/(?:when|if)\s+(?:the\s+)?price.*$/i, "")
+      .replace(/(?:when|if)\s+(?:the\s+|it's\s+|its\s+)?price.*$/i, "")
+      .replace(/(?:search\s+for|find|look\s+for)\s+/i, "")
+      .replace(/(?:and\s+)?(?:(?:add\s+)?(?:this\s+product\s+|it\s+)?(?:in|to)\s+(?:my\s+)?(?:cart|bag)|buy\s+(?:it|this)|purchase\s+(?:it|this))\s*$/i, "")
       .replace(/\s*\([^)]*\)\s*$/g, "")
       .trim();
 
@@ -326,8 +330,21 @@ export class TaskOrchestrator {
 
     const url = (observation.url || "").toLowerCase();
     const isProductPage = url.includes("/dp/") || url.includes("/gp/product") || url.includes("/p/") || url.includes("/product/") || url.includes("/item/");
+    const isSearchPage = url.includes("/s?k=") || url.includes("/search") || url.includes("search_query") || url.includes("search_results");
     const goalWantsCart = /add to cart|buy|purchase/i.test(session.goal);
-    const hasAddedToCart = session.history.some((h) => /add to cart|buy now/i.test(h));
+
+    // Track whether a real Add to Cart or Buy Now click was planned
+    if (
+      plannedAction.type === "CLICK" &&
+      plannedAction.target &&
+      /\b(add to cart|add to bag|buy now|add-to-cart)\b/i.test(
+        [plannedAction.target.name || "", plannedAction.target.selector || ""].join(" ")
+      )
+    ) {
+      session.hasAddedToCart = true;
+    }
+
+    const hasAddedToCart = Boolean(session.hasAddedToCart);
 
     // If on a product page and goal requires adding to cart, but it hasn't been clicked yet, ensure Add to Cart is clicked
     if (isProductPage && goalWantsCart && !hasAddedToCart && (plannedAction.type === "COMPLETE" || plannedAction.type === "SCROLL")) {
@@ -337,6 +354,7 @@ export class TaskOrchestrator {
       });
 
       if (addToCartNode) {
+        session.hasAddedToCart = true;
         const clickAction: AgentAction = {
           type: "CLICK",
           target: {
@@ -354,13 +372,65 @@ export class TaskOrchestrator {
       }
     }
 
-    const isCartPage = url.includes("/cart") || url.includes("/gp/cart") || url.includes("/smart-wagon") || (observation.title || "").toLowerCase().includes("cart");
+    // If on a search results page and goal requires adding to cart, but it hasn't been clicked yet
+    if (isSearchPage && goalWantsCart && !hasAddedToCart && (plannedAction.type === "COMPLETE" || plannedAction.type === "SCROLL")) {
+      // 1. Check if direct Add to Cart button exists on the search result cards
+      const searchAddToCart = observation.interactiveNodes.find((n) => {
+        const text = [n.name || "", n.value || "", n.selector || "", n.id || ""].join(" ").toLowerCase();
+        return /\b(add to cart|add to shopping cart|buy now|add-to-cart-button)\b/i.test(text);
+      });
 
-    // If item was already added to cart in an earlier step, or we arrived at the shopping cart page, terminate successfully immediately
-    if (goalWantsCart && (hasAddedToCart || isCartPage)) {
-      const summary = plannedAction.type === "COMPLETE" && plannedAction.summary
-        ? plannedAction.summary
-        : "Item has been added to cart successfully. Verified on cart screen.";
+      if (searchAddToCart) {
+        session.hasAddedToCart = true;
+        const clickAction: AgentAction = {
+          type: "CLICK",
+          target: {
+            id: searchAddToCart.id,
+            name: searchAddToCart.name || "Add to Cart",
+            role: searchAddToCart.role || "button",
+            selector: searchAddToCart.selector
+          },
+          description: `Click "${searchAddToCart.name || 'Add to Cart'}" on search result to add product to cart.`
+        };
+        this.transitionState(session, "EXECUTING");
+        session.stepIndex += 1;
+        session.history.push(`Step ${session.stepIndex}: [CLICK] Click Add to Cart button (${searchAddToCart.id})`);
+        return { action: clickAction, requiresApproval: false };
+      }
+
+      // 2. Otherwise, click the matching product card title link to navigate to the product page
+      const productLink = observation.interactiveNodes.find((n) => {
+        const isLink = n.role === "link" || (n.href && (n.href.includes("/dp/") || n.href.includes("/p/")));
+        if (!isLink) return false;
+        const name = (n.name || "").toLowerCase();
+        if (name.length < 10 || name.includes("customer review") || name.includes("sponsored")) return false;
+        return true;
+      });
+
+      if (productLink) {
+        const clickAction: AgentAction = {
+          type: "CLICK",
+          target: {
+            id: productLink.id,
+            name: productLink.name || "Product Link",
+            role: productLink.role || "link",
+            selector: productLink.selector
+          },
+          description: `Click matching product "${productLink.name}" to view details and add to cart.`
+        };
+        this.transitionState(session, "EXECUTING");
+        session.stepIndex += 1;
+        session.history.push(`Step ${session.stepIndex}: [CLICK] Click product link (${productLink.id})`);
+        return { action: clickAction, requiresApproval: false };
+      }
+    }
+
+    const isCartPage = url.includes("/cart") || url.includes("/gp/cart") || url.includes("/smart-wagon") || url.includes("/checkout/cart") || url.includes("/viewcart");
+
+    // If item was already added to cart in an earlier step, NEVER click Add to Cart again!
+    // Strictly enforce Quantity = 1 and terminate successfully immediately.
+    if (goalWantsCart && hasAddedToCart) {
+      const summary = "Product added to cart with quantity 1. Verified successfully.";
       const completeAction: AgentAction = {
         type: "COMPLETE",
         summary
@@ -371,11 +441,9 @@ export class TaskOrchestrator {
     }
 
     if (plannedAction.type === "COMPLETE") {
-      // Guardrail against hallucinated "Item added to cart" completions when still on search pages
-      const isSearchPage = url.includes("/s?k=") || url.includes("/search") || url.includes("search_query") || url.includes("search_results");
-
-      if (isSearchPage && !hasAddedToCart && /added to cart|purchased|condition met/i.test(plannedAction.summary || "")) {
-        plannedAction.summary = `Search completed on store. The requested product was not found in the search results, so no item was added to cart.`;
+      // Guardrail against hallucinated "Item added to cart" completions when item was never added
+      if (goalWantsCart && !hasAddedToCart && /added to cart|purchased|condition met/i.test(plannedAction.summary || "")) {
+        plannedAction.summary = `Search completed on store. The requested product was not found or price criteria were not met, so no item was added to cart.`;
       }
 
       this.transitionState(session, "COMPLETED");

@@ -866,6 +866,7 @@ export function App() {
   const liveExecutionStepsRef = useRef<ExecutionStepDetail[]>([]);
   const lastObservationRef = useRef<PageObservation | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
+  const hasAddedToCartRef = useRef<boolean>(false);
 
   const fetchProfiles = async () => {
     try {
@@ -1455,6 +1456,16 @@ export function App() {
           liveExecutionStepsRef.current.push(stepDetail);
           setLogs((prev) => [...prev, `Executing: [${msg.action.type}] ${desc}`]);
 
+          if (
+            msg.action.type === "CLICK" &&
+            (targetName.toLowerCase().includes("add to cart") ||
+             targetName.toLowerCase().includes("add to bag") ||
+             desc.toLowerCase().includes("add to cart") ||
+             desc.toLowerCase().includes("add to bag"))
+          ) {
+            hasAddedToCartRef.current = true;
+          }
+
           if (msg.action.type === "COMPLETE") {
             setTaskState("COMPLETED");
             const summary = msg.action.summary || "Task finished and verified successfully!";
@@ -1578,7 +1589,9 @@ export function App() {
 
   const sendExtensionMessage = (msg: ExtensionMessage) => {
     if (msg.type === "OBSERVATION_CAPTURED" && msg.observation) {
-      const heuristicAction = evaluateHeuristics(currentGoalRef.current, msg.observation);
+      const heuristicAction = evaluateHeuristics(currentGoalRef.current, msg.observation, {
+        alreadyAddedToCart: hasAddedToCartRef.current
+      });
       if (heuristicAction) {
         setLogs((prev) => [...prev, `Heuristics matched! Fast-tracking action (skipping LLM)...`]);
         const fakeMsg = { type: "EXECUTE_ACTION", taskId: msg.taskId, action: heuristicAction };
@@ -1690,6 +1703,7 @@ export function App() {
     executionStartTimeRef.current = Date.now();
     executionStepsCountRef.current = 0;
     liveExecutionStepsRef.current = [];
+    hasAddedToCartRef.current = false;
 
     // Automatically infer target portal URL if not explicitly provided
     let targetUrlToUse = customTargetUrl;

@@ -215,10 +215,13 @@ export async function executeAgentAction(
           inputEl.value = "";
         }
 
-        const proto =
-          inputEl instanceof HTMLTextAreaElement
-            ? HTMLTextAreaElement.prototype
-            : HTMLInputElement.prototype;
+        const win = doc.defaultView || (typeof window !== "undefined" ? window : globalThis.window);
+        const isTextArea = inputEl.tagName === "TEXTAREA";
+        const proto = isTextArea
+          ? (win && (win as unknown as { HTMLTextAreaElement?: typeof HTMLTextAreaElement }).HTMLTextAreaElement?.prototype) ||
+            (typeof HTMLTextAreaElement !== "undefined" ? HTMLTextAreaElement.prototype : Object.getPrototypeOf(inputEl))
+          : (win && (win as unknown as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement?.prototype) ||
+            (typeof HTMLInputElement !== "undefined" ? HTMLInputElement.prototype : Object.getPrototypeOf(inputEl));
         const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
 
         if (nativeSetter) {
@@ -227,14 +230,37 @@ export async function executeAgentAction(
           inputEl.value = action.text;
         }
 
-        const win = doc.defaultView || (typeof window !== "undefined" ? window : globalThis.window);
-        const Evt = (win && (win as unknown as { Event: typeof Event }).Event) || Event;
+        const Evt = (win && (win as unknown as { Event: typeof Event }).Event) || (typeof Event !== "undefined" ? Event : undefined);
 
         if (typeof inputEl.dispatchEvent === "function") {
           try {
             inputEl.dispatchEvent(new Evt("input", { bubbles: true, composed: true }));
             inputEl.dispatchEvent(new Evt("change", { bubbles: true, composed: true }));
             inputEl.dispatchEvent(new Evt("blur", { bubbles: true, composed: true }));
+
+            // If it is a search input, trigger Enter key / form submission
+            const isSearch =
+              inputEl.type === "search" ||
+              (inputEl.getAttribute("name") || "").toLowerCase().includes("search") ||
+              (inputEl.getAttribute("placeholder") || "").toLowerCase().includes("search") ||
+              (inputEl.getAttribute("aria-label") || "").toLowerCase().includes("search") ||
+              (action.target.name || "").toLowerCase().includes("search");
+
+            if (isSearch) {
+              const KeyEvt = (win && (win as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent) || KeyboardEvent;
+              inputEl.dispatchEvent(new KeyEvt("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+              inputEl.dispatchEvent(new KeyEvt("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+              inputEl.dispatchEvent(new KeyEvt("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+
+              const form = inputEl.form || inputEl.closest("form");
+              if (form) {
+                if (typeof form.requestSubmit === "function") {
+                  form.requestSubmit();
+                } else if (typeof form.submit === "function") {
+                  form.submit();
+                }
+              }
+            }
           } catch {
             // Ignored
           }
